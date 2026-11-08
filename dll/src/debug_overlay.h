@@ -41,6 +41,14 @@ void DebugMenuRender();
 
 bool DebugMenuVisible();
 
+// True once DebugMenuInit has set the panel up, so something can be drawn with it.
+bool DebugMenuReady();
+
+// The start-up pre-loader's screen: an opaque dark background with a title, a bar and two lines of
+// text, drawn whether or not the F4 panel is open. Same rules as DebugMenuRender - inside a
+// BeginScene/EndScene pair. fraction is 0..1.
+void DebugMenuRenderPreload(float fraction, const char* title, const char* detail, const char* hint);
+
 // The game's own Options button used to minimise the game and start GTA2 Manager.exe, which on
 // this install starts nothing, leaving the game paused behind a minimised window until it closed
 // itself. Pressing it now opens this panel instead, in the game, with no window change. Patches

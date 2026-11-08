@@ -134,6 +134,9 @@ public:
 
 private:
     bool EnsureDevice();
+    // Holds the game at its first scene behind a progress bar until the hand-made cars and the
+    // cache are ready. Once per run. See cache_warmup.h (the pre-loader).
+    void HoldForPreload();
     bool EnsureWorldLoaded();
     void RefreshAnimatedTiles();
     void UpdateCamera();
@@ -148,6 +151,7 @@ private:
     gta2::Renderer renderer_;
     Overlay overlay_;
     bool movieShown_ = false;
+    bool preloadDone_ = false;   // the pre-loader's bar has been shown (or is not wanted)
     LiveGeometry live_;
     gta2::Camera camera_;
     gta2::Map map_;

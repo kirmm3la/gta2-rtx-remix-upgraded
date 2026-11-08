@@ -1737,6 +1737,9 @@ constexpr int kHdPrepSprites = 80;
 volatile LONG g_hdPrepState[kHdPrepSprites];
 HdPrepared g_hdPrepared[kHdPrepSprites];
 volatile LONG g_hdPrepStarted = 0;
+// Set by the start-up pre-loader: the game is held behind its bar, so the preparing runs at
+// full speed from the first moment instead of at the lowest priority after a pause.
+volatile LONG g_hdPrepFast = 0;
 
 std::wstring HdDirectory() {
     std::wstring dir = CacheDirectory();
@@ -1826,11 +1829,11 @@ IDirect3DDevice9* g_hdLogoDevice = nullptr;
 // number wears each gang's emblem (-1: none). Set by the [logos] section of the effects ini.
 bool g_roofLogos = true;
 int g_logoCar[kLogoCount] = {-1, 32, 63, 36, 42, 26, 9};   // order of GangLogo: Meteor (Scientists), Karma Bus (Krishna), Bulwark (Russian Mafia)
-float g_logoLumaMax[kLogoCount] = {0, 256, 55, 78, 0, 0, 0};  // >0: only cars whose artwork is darker than this (the black Zaibatsu paint is 48; the next darkest Z-Type paint is 59)
+float g_logoLumaMax[kLogoCount] = {0, 256, 55, 0, 0, 0, 0};  // >0: only cars whose artwork is darker than this (the black Zaibatsu paint is 48; the next darkest Z-Type paint is 59)
 float g_logoSize[kLogoCount] = {0.18f, 0.11f, 0.18f, 0.15f, 0.20f, 0.40f, 0.22f};       // per emblem; the Miara's roof is small
 float g_logoForward[kLogoCount] = {-0.30f, -0.20f, -0.30f, 0.20f, -0.06f, 0.0f, -0.38f};
 int g_logoTurn[kLogoCount] = {2, 2, 0, 2, 0, 2, 2};  // quarter turns so the artwork stands upright when the car drives up the screen
-float g_logoBlueMin[kLogoCount] = {0, 0, 0, 1.20f, 0, 0, 0};   // >0: only cars whose artwork is at least this much more blue than red
+float g_logoBlueMin[kLogoCount] = {0, 0, 0, 1.55f, 0, 0, 0};   // >0: only cars whose artwork is at least this much more blue than red
 float g_logoLift = 0.004f;         // how far the emblem floats over the roof, in tiles; the higher, the longer its shadow on the roof
 float g_roofLogoSize = 0.18f;      // length of the emblem along the car, in tiles
 float g_roofLogoForward = -0.30f;
@@ -2074,11 +2077,18 @@ void PrepareGlass(HdCar& hd) {
 // it in memory when the car turns up), one car at a time, at the lowest priority. Keeps
 // nothing but the names of the files it made; see g_hdPrepState.
 DWORD WINAPI HdPrepareThread(LPVOID) {
-    SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
-    Sleep(1500);
+    bool background = !g_hdPrepFast;
+    if (background) {
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+        for (int wait = 0; wait < 15 && !g_hdPrepFast; ++wait) Sleep(100);   // 1.5 s, unless hurried
+    }
     const DWORD started = GetTickCount();
     int cars = 0;
     for (int sprite = 0; sprite < kHdPrepSprites; ++sprite) {
+        if (background && g_hdPrepFast) {   // the pre-loader started while this was already creeping along
+            SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
+            background = false;
+        }
         if (InterlockedCompareExchange(&g_hdPrepState[sprite], 1, 0) != 0) continue;   // the game has it
         {
             HdCar car;
@@ -3827,8 +3837,8 @@ void FireEffectsLoad(const char* iniPath) {
         g_logoLumaMax[kLogoYakuza] = static_cast<float>(logos("yakuza_max_brightness", 256));
         g_logoLumaMax[kLogoZaibatsu] = static_cast<float>(logos("zaibatsu_max_brightness", 55));
         g_logoCar[kLogoRednecks] = logos("rednecks_car", 36);
-        g_logoLumaMax[kLogoRednecks] = static_cast<float>(logos("rednecks_max_brightness", 78));
-        g_logoBlueMin[kLogoRednecks] = logos("rednecks_blue_min_percent", 120) / 100.0f;
+        g_logoLumaMax[kLogoRednecks] = static_cast<float>(logos("rednecks_max_brightness", 0));
+        g_logoBlueMin[kLogoRednecks] = logos("rednecks_blue_min_percent", 155) / 100.0f;
         g_logoSize[kLogoRednecks] = logos("rednecks_size_percent", 15) / 100.0f;
         g_logoForward[kLogoRednecks] = logos("rednecks_forward_percent", 20) / 100.0f;
         g_logoTurn[kLogoRednecks] = (logos("rednecks_turn_degrees", 180) / 90) & 3;
@@ -3942,6 +3952,26 @@ void SetCarNormalStrength(float strength) {
 void SetCarHd(bool hd, bool normalMaps) {
     g_carHd = hd;
     g_carNormalMaps = normalMaps;
+}
+
+// The start-up pre-loader (cache_warmup.cpp) waits for these. False: there is nothing here to
+// wait for - the hand-made cars or their materials are off.
+bool HdPreloadStart() {
+    if (!g_carHd || !g_carMaterial) return false;
+    InterlockedExchange(&g_hdPrepFast, 1);
+    StartHdPrepare();   // does nothing if the thread is already running
+    return true;
+}
+
+bool HdPreloadProgress(int* done, int* total) {
+    if (!g_carHd || !g_carMaterial) return false;
+    int n = 0;
+    for (int sprite = 0; sprite < kHdPrepSprites; ++sprite) {
+        if (g_hdPrepState[sprite] >= 2) ++n;   // the thread did it, or the game took it
+    }
+    *done = n;
+    *total = kHdPrepSprites;
+    return true;
 }
 
 void LiveGeometry::BeginFrame() {

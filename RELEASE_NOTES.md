@@ -1,7 +1,7 @@
-# GTA2 RTX Upgraded 1.2
+# GTA2 RTX Upgraded 1.3
 
 A Direct3D 9 renderer for GTA2 that lets RTX Remix path-trace the game, built on
-[gebdag/gta2-rtx-remix](https://github.com/gebdag/gta2-rtx-remix) (MIT). This release adds a hand-made visual layer on top.
+[gebdag/gta2-rtx-remix](https://github.com/gebdag/gta2-rtx-remix) (MIT), now updated to gebdag's newest version, v0.8.5. This release adds a hand-made visual layer on top.
 
 ## Install
 
@@ -26,7 +26,16 @@ So today there is no official place to get it. The game is still easy to find on
 already own (the original CD, or an old Rockstar or Steam purchase). This project ships no game files and does not host or
 link to downloads of the game.
 
-## What's new in 1.2
+## What's new in 1.3
+
+- **Updated to gebdag's newest version:** this release is built on the latest gta2-rtx-remix by gebdag (v0.8.5), so it includes
+  everything new from the original project, such as its WidescreenFix and Plugin SDK support.
+- **Start-up bar:** the game now starts with a progress bar that prepares the HD cars and loads the saved car pictures first,
+  so nothing is built while you play. Turn it off with `enabled=0` under `[preload]` in `gta2dx9_effects.ini`.
+- **New option:** F4 menu > "Score numbers" > "Hide the exploding score numbers" turns off the cash numbers that burst out when
+  you run over a pedestrian or hit a car (the setting the original GTA2 Manager used to have). Press Save to keep it.
+
+## What was new in 1.2
 
 - **Smoother on a fresh install:** the first time a car model or a new paint colour appears, the mod used to stop the game for a
   moment to build its HD glass maps, door pictures and dents. That work now runs in the background, so new cars and doors no

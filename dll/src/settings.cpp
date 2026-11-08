@@ -202,6 +202,7 @@ void SettingsSaveAll() {
                                  : HudFit() == HudFitMode::Widescreen ? "widescreen"
                                                                       : "fit");
     fprintf(out, "HideStageArrow=%d\n", HideStageArrow() ? 1 : 0);
+    fprintf(out, "HideScoreNumbers=%d\n", HideScoreNumbers() ? 1 : 0);
     fprintf(out, "FpsCap=%.4f\n", FrameLimitFps());
     fprintf(out, "DumpTextures=%d\n", TextureDumping() ? 1 : 0);
     fprintf(out, "CloseHoles=%d\n", CloseHoles() ? 1 : 0);
@@ -308,6 +309,8 @@ void SettingsLoadAll() {
                                                        : HudFitMode::Fit);
         } else if (!_stricmp(key, "HideStageArrow")) {
             SetHideStageArrow(atoi(value) != 0);
+        } else if (!_stricmp(key, "HideScoreNumbers")) {
+            SetHideScoreNumbers(atoi(value) != 0);
         } else if (!_stricmp(key, "FpsCap")) {
             FrameLimitSet(static_cast<float>(atof(value)));
         } else if (!_stricmp(key, "DumpTextures")) {

@@ -155,9 +155,56 @@ static __declspec(naked) void StageMessageThunk() {
     }
 }
 
+// The floating score numbers - the "$100" that bursts out of a pedestrian you run over or a car
+// you hit.
+//
+// The game has one byte for them, at 0x005EAD5D, set at startup from the value exploding_on
+// under ...\GTA2\Screen in the registry (FUN_004CB200 stores `exploding_on != 1`, the default
+// being 1). Set means "no numbers": the level load (0x0045D184) then does not build the number
+// manager, [0x0066F5DC], and the level end (0x0045D7FD) does not free it. Eight other places
+// read the byte with `mov al, [0x005EAD5D]`: the manager's draw (0x0045A605) and update
+// (0x0045C372), and six that start a number (0x004B8076, 0x004B8777, 0x004B88D1, 0x004B8B1F,
+// 0x004B8BD3, 0x004B8C9C).
+//
+// Flipping the game's own byte while a level runs would be unsafe: switched off after a level
+// loaded without a manager, the draw would call into nothing. So the build/free sites keep the
+// game's byte, and those eight reads are pointed at a byte of ours instead. Each frame it is
+// set to "the game's byte, or the user asked to hide them", so a number manager that exists is
+// only ever switched off and on, and the registry value (and the game's own cheat that toggles
+// the byte) still count.
+//
+// Starts at 1 so that nothing is drawn before the first frame has copied the game's byte over.
+static volatile uint8_t s_scoreNumbersOff = 1;
+static volatile uint8_t s_hideScoreNumbers = 0;
+
 namespace {
 
 int32_t RelTo(uintptr_t from, uintptr_t to);   // defined below
+
+const uintptr_t kScoreNumberFlag = 0x005EAD5D;
+const uintptr_t kScoreNumberReads[] = {0x0045A605, 0x0045C372, 0x004B8076, 0x004B8777,
+                                       0x004B88D1, 0x004B8B1F, 0x004B8BD3, 0x004B8C9C};
+bool g_scoreNumbersSwitch = false;
+
+// Each site must be exactly `mov al, [0x005EAD5D]` (A0 5D AD 5E 00) before any is touched, so a
+// different gta2.exe is left alone.
+bool InstallScoreNumberSwitch() {
+    for (uintptr_t at : kScoreNumberReads) {
+        const uint8_t* site = reinterpret_cast<const uint8_t*>(at);
+        uint32_t operand = 0;
+        memcpy(&operand, site + 1, sizeof(operand));
+        if (site[0] != 0xA0 || operand != static_cast<uint32_t>(kScoreNumberFlag)) return false;
+    }
+    const uint32_t ours = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&s_scoreNumbersOff));
+    for (uintptr_t at : kScoreNumberReads) {
+        uint8_t* site = reinterpret_cast<uint8_t*>(at);
+        DWORD previous = 0;
+        if (!VirtualProtect(site + 1, 4, PAGE_EXECUTE_READWRITE, &previous)) return false;
+        memcpy(site + 1, &ours, sizeof(ours));
+        VirtualProtect(site + 1, 4, previous, &previous);
+    }
+    return true;
+}
 
 const uintptr_t kArrowDrawCalls[] = {0x004C8514, 0x004C8524};
 bool g_arrowHideInstalled = false;
@@ -285,11 +332,27 @@ void HudPassInstall() {
     g_partsKnown = InstallParts();
     g_arrowHideInstalled = InstallArrowHide();
     g_messageHideInstalled = InstallMessageHide();
+    g_scoreNumbersSwitch = InstallScoreNumberSwitch();
     FlushInstructionCache(GetCurrentProcess(), nullptr, 0);
-    Log("hud pass: installed (%s; stage-end arrow switch %s, its message switch %s)",
+    Log("hud pass: installed (%s; stage-end arrow switch %s, its message switch %s, score-number switch %s)",
         g_partsKnown ? "parts told apart" : "parts not told apart - one HUD for placement",
         g_arrowHideInstalled ? "ready" : "unavailable",
-        g_messageHideInstalled ? "ready" : "unavailable");
+        g_messageHideInstalled ? "ready" : "unavailable",
+        g_scoreNumbersSwitch ? "ready" : "unavailable");
+}
+
+// The game's own byte, as set from the registry: nonzero means it builds no number manager, so the
+// numbers cannot be turned on from here.
+bool ScoreNumbersOffByGame() {
+    return *reinterpret_cast<const volatile uint8_t*>(kScoreNumberFlag) != 0;
+}
+bool HideScoreNumbers() { return s_hideScoreNumbers != 0; }
+void SetHideScoreNumbers(bool on) { s_hideScoreNumbers = on ? 1 : 0; }
+bool HideScoreNumbersAvailable() { return g_scoreNumbersSwitch; }
+
+void ScoreNumbersTick() {
+    if (!g_scoreNumbersSwitch) return;
+    s_scoreNumbersOff = (s_hideScoreNumbers || ScoreNumbersOffByGame()) ? 1 : 0;
 }
 
 bool HideStageArrow() { return s_hideStageArrow != 0; }

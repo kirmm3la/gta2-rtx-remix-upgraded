@@ -11,6 +11,7 @@
 
 #include "../../src/gta2_style.h"
 #include "../../src/world_mesh.h"
+#include "cache_warmup.h"
 #include "debug_overlay.h"
 #include "frame_limiter.h"
 #include "game_access.h"
@@ -1299,6 +1300,37 @@ void WorldView::CheckDrawnShape(int corners) {
     ++shapeChecks_;
 }
 
+// The start-up pre-loader. At the first scene after the intro the game is held here, in the
+// middle of its own frame, while a full-screen bar fills: the hand-made cars are prepared and the
+// cache is read into memory now, at full speed, instead of in pieces while you play. The window
+// is kept pumped so it is not marked as not responding, and the frame goes on as normal after.
+void WorldView::HoldForPreload() {
+    preloadDone_ = true;   // once, whatever happens below
+    if (!PreloadWanted()) return;
+    PreloadBegin();
+    for (;;) {
+        const PreloadStatus status = PreloadPoll();
+        if (status.done) break;
+        bool closing = false;
+        MSG message;
+        while (PeekMessageA(&message, nullptr, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) {
+                PostQuitMessage(static_cast<int>(message.wParam));   // hand it back to whoever is looping
+                closing = true;
+                break;
+            }
+            TranslateMessage(&message);
+            DispatchMessageA(&message);
+        }
+        if (closing || (gameWindow_ && !IsWindow(gameWindow_))) break;
+        if (renderer_.BeginFrame()) {
+            DebugMenuRenderPreload(status.fraction, status.title, status.detail, status.hint);
+            renderer_.EndFrame();
+        }
+        Sleep(30);
+    }
+}
+
 void WorldView::RenderFrame() {
     if (!EnsureDevice()) return;
 
@@ -1361,6 +1393,9 @@ void WorldView::RenderFrame() {
     // says so, which it cannot do if it only exists once Remix is there.
     DebugMenuInit(gameWindow_, window_, renderer_.Device());
     DebugMenuPoll();
+
+    // The pre-loader's bar, once, at the first real scene (not the intro movie's frames).
+    if (!preloadDone_ && !movieShown_ && DebugMenuReady()) HoldForPreload();
 
     // The sky. Runs whether or not Remix answered - the clock is ours and the
     // menu shows it either way - and pushes the sun when it can.

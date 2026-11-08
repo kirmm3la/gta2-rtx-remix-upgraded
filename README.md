@@ -10,8 +10,9 @@ https://github.com/user-attachments/assets/38f0c67a-ba31-46e7-a305-c5b6cfbde161
 <img width="3840" height="2160" alt="Grand Theft Auto 2 2026 11 01 - 12 16 56 07 00_00_15_26 Still002" src="https://github.com/user-attachments/assets/48fe2029-cf81-48f3-a180-14d13b71fd2a" />
 <img width="3840" height="2160" alt="Grand Theft Auto 2 2026 11 01 - 12 16 56 07 00_01_02_47 Still003" src="https://github.com/user-attachments/assets/bbcffc85-eaff-49e3-98c0-7bd6405a21e8" />
 
-This project is an upgrade of **[gebdag/gta2-rtx-remix](https://github.com/gebdag/gta2-rtx-remix)**, the
-Direct3D 9 renderer that makes GTA2 run on RTX Remix. All the renderer work is theirs; thank you.
+This project is an upgrade of **[gebdag/gta2-rtx-remix](https://github.com/gebdag/gta2-rtx-remix)** (now updated to his
+newest version, v0.8.5, including its WidescreenFix and Plugin SDK support), the Direct3D 9 renderer that makes GTA2 run on RTX Remix.
+All the renderer work is theirs; thank you.
 Everything on top of it (HD cars, car damage, lights, blood, voices and more) is added here.
 Both projects are MIT licensed.
 
@@ -29,10 +30,45 @@ Installing never touches your player profiles or saves.
 **You need:** your own copy of GTA2 (v9.6 is what it was tested on; this project ships no game files), an
 RTX-capable GPU with a current NVIDIA driver, and Windows 10 or 11, 64-bit.
 
+### PC specs
+
+The game itself is from 1999, but the lighting is full ray tracing (path tracing), so the graphics card is what matters.
+
+| | Minimum | Recommended |
+|---|---|---|
+| Graphics card | NVIDIA GeForce RTX 2060 or newer (any RTX card; not tested on cards this small, so expect to lower the resolution) | NVIDIA GeForce RTX 3070 or better |
+| Video memory | 8 GB | 12 GB or more |
+| Processor | 6 cores, about 3.5 GHz | 8 cores or more, e.g. Ryzen 7 / Core i7 and up |
+| Memory (RAM) | 16 GB | 32 GB |
+| Disk | 5 GB free, on an SSD | 10 GB free on an SSD |
+| System | Windows 10 or 11, 64-bit, current NVIDIA driver | the same |
+
+Tested on two PCs:
+
+- Ryzen 7 9800X3D, 32 GB DDR5 RAM, GeForce RTX 5080 (frame generation on).
+- Ryzen 9 5950X, 64 GB RAM, GeForce RTX 3090 Ti at 2560x1440 (frame generation off).
+
+Both run smoothly with no stutter. The game runs at 30 frames per second (that is what GTA2 was made for), so a faster card
+gives you higher resolution and cleaner light, not more frames.
+
+- **Frame generation** (DLSS 3 and later) works only on GeForce RTX 40 series and newer. On an RTX 30 series card, leave it
+  off (`rtx.dlfg.enable = False` in `rtx.conf`): it only adds ghosting.
+- **Start-up bar:** when the game starts, a progress bar prepares the HD cars and loads their saved pictures from the
+  `gta2dx9_cache` folder (up to about 2 GB) into memory. The game begins when the bar is full, so nothing has to be prepared
+  while you play. That is why an SSD matters. To turn the bar off, put `enabled=0` under `[preload]` in `gta2dx9_effects.ini`.
+- Honest note: only the two high-end PCs above have actually been tested. The minimum and recommended columns are estimates
+  and will be corrected as people report how it runs on their hardware.
+
 **Where to get GTA2:** see [Where to get GTA2](#where-to-get-gta2) below.
 
 **Something wrong?** Check `gta2dx9.log` next to `gta2.exe`, and the troubleshooting list in `gta2dx9_README.txt`
 inside the zip.
+
+**Only the F4 menu works and the game looks the same as before?** Press F4. If the top of the panel says *"Remix API
+unavailable ... (not running under Remix)"*, RTX Remix is not installed in your GTA2 folder. Go back to step 1 above: download
+`Remix_Plus_v1.5.1_x86_games_release.zip` (the x86, 32-bit one), unzip all of it into the GTA2 folder next to `gta2.exe`, and
+say yes to replacing files. You should then see a `d3d9.dll` and a `.trex` folder there. You also need an NVIDIA RTX graphics
+card and a current driver.
 
 ## What you get
 

@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -17,7 +18,21 @@
 #include "log.h"
 
 namespace gta2dx9 {
+
+// Defined in live_geometry.cpp: the hand-made cars' glass and normal maps, made at full speed.
+bool HdPreloadStart();
+bool HdPreloadProgress(int* done, int* total);
+
 namespace {
+
+// What the pre-loader's bar reads. State 2 (finished) is also what it is when no thread was
+// started, so a warm-up that is off never holds the bar.
+std::atomic<int> g_warmState{2};   // 0 listing files, 1 reading, 2 finished
+std::atomic<unsigned long long> g_warmBytesDone{0}, g_warmBytesTotal{0};
+std::atomic<unsigned> g_warmFilesDone{0}, g_warmFilesTotal{0};
+bool g_preload = true;             // [preload] enabled
+bool g_preloadSkip = false;        // [preload] allow_skip
+int g_preloadTimeout = 300;        // [preload] timeout_seconds
 
 std::mutex g_mutex;
 std::wstring g_gameDir;                     // with its closing backslash
@@ -190,6 +205,7 @@ uint64_t ReadThrough(const std::wstring& path, std::vector<uint8_t>& buffer) {
         DWORD got = 0;
         if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) || got == 0) break;
         total += got;
+        g_warmBytesDone += got;
     }
     CloseHandle(file);
     return total;
@@ -213,9 +229,12 @@ void ListArtwork(std::vector<std::wstring>* out) {
 }
 
 DWORD WINAPI WarmThread(LPVOID) {
-    // Lowest CPU and disk priority: the game's own loading goes first, always.
-    SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
-    Sleep(2500);
+    // Lowest CPU and disk priority: the game's own loading goes first, always. Not with the
+    // pre-loader: the game is held behind its bar, so there is nothing to give way to.
+    if (!g_preload) {
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+        Sleep(2500);
+    }
 
     std::vector<Entry> previous;
     int since = Today();
@@ -241,11 +260,30 @@ DWORD WINAPI WarmThread(LPVOID) {
     std::vector<uint8_t> buffer(1 << 20);
     uint64_t bytes = 0;
     size_t files = 0, missing = 0;
+
+    // How much there is to read, so the pre-loader's bar can say how far along it is: the sizes
+    // of the files up to the budget, which is where the loop below stops.
+    {
+        uint64_t sum = 0;
+        unsigned count = 0;
+        for (const std::wstring& rel : order) {
+            if (sum >= budget) break;
+            WIN32_FILE_ATTRIBUTE_DATA info;
+            if (!GetFileAttributesExW((g_gameDir + rel).c_str(), GetFileExInfoStandard, &info)) continue;
+            sum += (static_cast<uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+            ++count;
+        }
+        g_warmBytesTotal = sum;
+        g_warmFilesTotal = count;
+        g_warmState = 1;
+    }
     for (const std::wstring& rel : order) {
         if (bytes >= budget) break;
         const uint64_t got = ReadThrough(g_gameDir + rel, buffer);
-        if (got) { bytes += got; ++files; } else { ++missing; }
+        if (got) { bytes += got; ++files; ++g_warmFilesDone; } else { ++missing; }
     }
+    g_warmState = 2;   // the bar can go; what follows (cleanup, the list) is for the background
+    if (g_preload) SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
     Log("cache warm-up: read %zu files (%.0f MB) in %.1f s; %zu from the last session's list, %zu hand-made artwork, "
         "%zu no longer there",
         files, bytes / 1048576.0, (GetTickCount() - started) / 1000.0, fromList, art.size(), missing);
@@ -290,15 +328,102 @@ void CacheWarmupStart() {
         FindGameDirectory();
     }
     const std::wstring ini = g_gameDir + L"gta2dx9_effects.ini";
+    g_preload = GetPrivateProfileIntW(L"preload", L"enabled", 1, ini.c_str()) != 0;
+    g_preloadSkip = GetPrivateProfileIntW(L"preload", L"allow_skip", 0, ini.c_str()) != 0;
+    g_preloadTimeout = static_cast<int>(GetPrivateProfileIntW(L"preload", L"timeout_seconds", 300, ini.c_str()));
+    if (g_preloadTimeout < 10) g_preloadTimeout = 10;
     if (GetPrivateProfileIntW(L"cache", L"warmup", 1, ini.c_str()) == 0) {
         Log("cache warm-up: off ([cache] warmup=0)");
         return;
     }
+    g_warmState = 0;
     g_maxMegabytes = static_cast<int>(GetPrivateProfileIntW(L"cache", L"max_megabytes", 2048, ini.c_str()));
     if (g_maxMegabytes < 64) g_maxMegabytes = 64;
     g_pruneDays = static_cast<int>(GetPrivateProfileIntW(L"cache", L"prune_days", 10, ini.c_str()));
     HANDLE thread = CreateThread(nullptr, 0, WarmThread, nullptr, 0, nullptr);
     if (thread) CloseHandle(thread);
+    else g_warmState = 2;   // no thread, nothing to wait for
+}
+
+// ---- The start-up pre-loader ---------------------------------------------------------------
+
+namespace {
+DWORD g_preloadStart = 0;
+bool g_preloadBegun = false;
+bool g_preloadHd = false;        // the cars' preparation was started and is worth waiting for
+bool g_preloadFinished = false;
+}  // namespace
+
+bool PreloadWanted() { return g_preload && !g_preloadFinished; }
+
+WarmupProgress CacheWarmupProgress() {
+    WarmupProgress p;
+    p.finished = g_warmState.load() == 2;
+    p.bytesDone = g_warmBytesDone.load();
+    p.bytesTotal = g_warmBytesTotal.load();
+    p.filesDone = g_warmFilesDone.load();
+    p.filesTotal = g_warmFilesTotal.load();
+    return p;
+}
+
+void PreloadBegin() {
+    if (g_preloadBegun) return;
+    g_preloadBegun = true;
+    g_preloadStart = GetTickCount();
+    g_preloadHd = HdPreloadStart();
+    Log("preload: the game is held at its first frame until the hand-made cars are prepared and the cache is read "
+        "(cars %s, cache %s)",
+        g_preloadHd ? "yes" : "off", g_warmState.load() == 2 ? "off or empty" : "yes");
+}
+
+PreloadStatus PreloadPoll() {
+    PreloadStatus s;
+    s.done = false;
+    const WarmupProgress w = CacheWarmupProgress();
+    int hdDone = 0, hdTotal = 0;
+    const bool hdActive = g_preloadHd && HdPreloadProgress(&hdDone, &hdTotal) && hdTotal > 0;
+    const bool hdFinished = !hdActive || hdDone >= hdTotal;
+    float hdFrac = hdActive ? static_cast<float>(hdDone) / hdTotal : 1.0f;
+    float warmFrac = 1.0f;
+    if (!w.finished) {
+        warmFrac = w.bytesTotal ? static_cast<float>(static_cast<double>(w.bytesDone) / w.bytesTotal) : 0.0f;
+        if (warmFrac > 1.0f) warmFrac = 1.0f;
+    }
+    // The cache is the long part when there is a lot of it, and the cars when there is not, so the
+    // bar weighs each by how much there is to do rather than giving each half.
+    float warmWeight = 0.5f + static_cast<float>(w.bytesTotal / (512.0 * 1048576.0));
+    if (warmWeight > 4.0f) warmWeight = 4.0f;
+    s.fraction = (hdFrac + warmWeight * warmFrac) / (1.0f + warmWeight);
+    if (s.fraction > 1.0f) s.fraction = 1.0f;
+
+    _snprintf(s.title, sizeof(s.title) - 1, "Getting the HD cars ready");
+    if (!w.finished && w.bytesTotal == 0) {
+        _snprintf(s.detail, sizeof(s.detail) - 1, "Looking through the picture cache...");
+    } else {
+        _snprintf(s.detail, sizeof(s.detail) - 1, "Cars %d of %d   -   pictures %u of %u files (%llu of %llu MB)",
+                  hdDone, hdTotal, w.filesDone, w.filesTotal, w.bytesDone / 1048576ull, w.bytesTotal / 1048576ull);
+    }
+    _snprintf(s.hint, sizeof(s.hint) - 1, "%s",
+              g_preloadSkip ? "Press Esc to skip. The game starts when the bar is full."
+                            : "The game starts when the bar is full. It only takes long the first time.");
+
+    bool skip = false;
+    if (g_preloadSkip && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
+        DWORD pid = 0;
+        if (HWND foreground = GetForegroundWindow()) GetWindowThreadProcessId(foreground, &pid);
+        skip = pid == GetCurrentProcessId();
+    }
+    const bool timedOut = static_cast<int>((GetTickCount() - g_preloadStart) / 1000) >= g_preloadTimeout;
+    if ((hdFinished && w.finished) || skip || timedOut) {
+        s.done = true;
+        s.fraction = 1.0f;
+        g_preloadFinished = true;
+        Log("preload: %s after %.1f s (cars %d/%d, cache %u files, %llu MB)",
+            skip ? "skipped" : (timedOut ? "gave up waiting" : "done"), (GetTickCount() - g_preloadStart) / 1000.0,
+            hdDone, hdTotal, w.filesDone, w.bytesDone / 1048576ull);
+    }
+    s.title[sizeof(s.title) - 1] = s.detail[sizeof(s.detail) - 1] = s.hint[sizeof(s.hint) - 1] = '\0';
+    return s;
 }
 
 }  // namespace gta2dx9

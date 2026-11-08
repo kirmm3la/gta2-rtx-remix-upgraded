@@ -36,4 +36,14 @@ bool HideStageArrow();
 void SetHideStageArrow(bool on);
 bool HideStageArrowAvailable();
 
+// The floating score numbers that burst out of a pedestrian you run over or a car you hit. With this
+// on they are not drawn (the game's own registry value exploding_on=0 does the same, and wins: it
+// builds no number manager at all, so they cannot be switched back on without restarting).
+bool HideScoreNumbers();
+void SetHideScoreNumbers(bool on);
+bool HideScoreNumbersAvailable();
+bool ScoreNumbersOffByGame();
+// Once a frame: copies the game's own switch, or ours, to the byte the game now reads.
+void ScoreNumbersTick();
+
 }  // namespace gta2dx9

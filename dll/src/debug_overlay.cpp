@@ -565,6 +565,28 @@ void DrawGeneral() {
         }
     }
 
+    ImGui::SeparatorText("Score numbers");
+    {
+        // The "$100" that bursts out of a pedestrian you run over or a car you hit. The original
+        // options screen (GTA2 Manager) had a switch for it; this is the same thing, in the game.
+        const bool byGame = ScoreNumbersOffByGame();
+        bool hide = HideScoreNumbers() || byGame;
+        if (!HideScoreNumbersAvailable() || byGame) ImGui::BeginDisabled();
+        if (ImGui::Checkbox("Hide the exploding score numbers", &hide)) {
+            SetHideScoreNumbers(hide);
+            SettingsMarkDirty();
+        }
+        if (!HideScoreNumbersAvailable() || byGame) ImGui::EndDisabled();
+        Help("Hides the cash numbers that burst out when you run over a pedestrian or hit a car. It "
+             "takes effect at once and can be switched back on at any time. Press Save to keep the "
+             "choice.");
+        if (!HideScoreNumbersAvailable()) {
+            ImGui::TextColored(kDim, "Not available: this gta2.exe is not the build it was written for.");
+        } else if (byGame) {
+            ImGui::TextColored(kDim, "Already off in the game's own settings (exploding_on = 0 in the registry).");
+        }
+    }
+
     ImGui::SeparatorText("Sound");
     {
         // The game's own engine loops are loud against everything else. The level is applied as each
@@ -2652,6 +2674,7 @@ void DebugMenuShutdown() {
 void DebugMenuPoll() {
     ProgressProbeTick();
     GameSaveTick();
+    ScoreNumbersTick();
     if (!g_initialised) return;
 
     // Polled rather than taken off WM_KEYDOWN: GTA2 reads the keyboard through
@@ -2708,6 +2731,43 @@ void OptionsButtonInstall() {
 bool DebugMenuWantsMouse() {
     return g_initialised && g_visible && ImGui::GetCurrentContext()
         && ImGui::GetIO().WantCaptureMouse;
+}
+
+bool DebugMenuReady() { return g_initialised && ImGui::GetCurrentContext(); }
+
+void DebugMenuRenderPreload(float fraction, const char* title, const char* detail, const char* hint) {
+    if (!g_initialised || !ImGui::GetCurrentContext()) return;
+
+    const float wanted = g_scaleSetting > 0.0f ? g_scaleSetting : AutoScale();
+    if (fabsf(wanted - g_scale) > 0.005f) ApplyScale(wanted);
+
+    ImGui_ImplDX9_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    // Opaque, so whatever the back buffer held before - nothing has been drawn yet - cannot show.
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), size, IM_COL32(8, 10, 14, 255));
+
+    const float w = S(620.0f), h = S(150.0f);
+    ImGui::SetNextWindowPos(ImVec2((size.x - w) * 0.5f, (size.y - h) * 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
+                                   ImGuiWindowFlags_NoBackground;
+    if (ImGui::Begin("##preload", nullptr, flags)) {
+        ImGui::TextUnformatted(title ? title : "");
+        ImGui::Spacing();
+        ImGui::ProgressBar(fraction < 0.0f ? 0.0f : (fraction > 1.0f ? 1.0f : fraction), ImVec2(-1.0f, S(28.0f)));
+        ImGui::Spacing();
+        ImGui::TextColored(kDim, "%s", detail ? detail : "");
+        ImGui::TextColored(kDim, "%s", hint ? hint : "");
+    }
+    ImGui::End();
+
+    ImGui::EndFrame();
+    ImGui::Render();
+    ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
 }
 
 void DebugMenuRender() {
